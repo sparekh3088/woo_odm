@@ -7,6 +7,7 @@ Author: Jignesh kaila
 Author URI: http://www.mbjtechnolabs.com
 License: GPL2
 Text Domain: delivery-date-min-max-qty-inventory-woocommerce
+Contributor: Sohil Parekh
 
 */
 
@@ -83,6 +84,7 @@ function TodayTotalQty() {
 
 function theme_options_panel(){
 	add_menu_page('Theme page title', 'OMS', 'manage_options', 'woocommerce_reports&tab=sales&chart=report_by_delivery_date', 'wps_theme_func');
+	add_submenu_page( 'woocommerce_reports&tab=sales&chart=report_by_delivery_date', 'Google Drive Settings', 'OMS Google Drive', 'manage_options', 'oms_google_drive', 'sp_google_drive_settings' );
   
 }
 add_action('admin_menu', 'theme_options_panel');
@@ -102,7 +104,7 @@ add_action('woocommerce_reports_charts', 'woocommerce_reports_charts_own', 10, 1
 
 function woocommerce_reports_charts_own($charts){
 	$newChartArray = array();
-	$charts['sales']['charts']['report_by_delivery_date'] = array('description' => '', 'function' => 'woocommerce_by_delivery_date', 'title' => 'Order By Delivery Date' );
+	$charts['sales']['charts']['report_by_delivery_date'] = array('description' => '', 'function' => 'woocommerce_by_delivery_date', 'title' => 'OMS' );
 	return $charts;
 	
 }
@@ -291,7 +293,7 @@ function woocommerce_by_delivery_date() {
                         (SELECT meta_value FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = '_billing_last_name')) last_name,
                         (SELECT meta_value FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = '_billing_email') email,
                         (SELECT meta_value FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = '_billing_phone') phone,
-                        (SELECT meta_value FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = 'Delivery / Collection Date') delivery_date,
+                        (SELECT STR_TO_DATE( meta_value, '%W, %e %M, %Y') FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = 'Delivery / Collection Date') delivery_date,
                         (SELECT meta_value FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = 'delivery-time') delivery_time,
                         (SELECT meta_value FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = '_shipping_address_1') address,
                         (SELECT meta_value FROM `wp_postmeta` wp_postmeta WHERE `post_id` = order_items.order_id AND `meta_key` = '_purchase_note') purchase_note,
@@ -307,8 +309,8 @@ function woocommerce_by_delivery_date() {
                         (case when length(trim('$name')) = 0 then 1 =1 else last_name like '%$name%' end)
                         and (case when length(trim('$email')) = 0 then 1 =1 else email = '$email' end) 
                         and (case when length(trim('$phone')) = 0 then 1 =1 else phone = '$phone' end) 
-                        and (case when length(trim('$start_date')) = 0 then 1 =1 else STR_TO_DATE(delivery_date,'%W, %e %M, %Y') >= STR_TO_DATE('$start_date', '%Y-%m-%d') end)     
-                        and (case when length(trim('$end_date')) = 0 then 1 =1 else STR_TO_DATE(delivery_date,'%W, %e %M, %Y') <= STR_TO_DATE('$end_date', '%Y-%m-%d') end)";
+                        and (case when length(trim('$start_date')) = 0 then 1 =1 else delivery_date >= STR_TO_DATE('$start_date', '%Y-%m-%d') end)     
+                        and (case when length(trim('$end_date')) = 0 then 1 =1 else delivery_date <= STR_TO_DATE('$end_date', '%Y-%m-%d') end) order by delivery_date desc";
 
 //        $myquery = "
 //		SELECT *
@@ -339,8 +341,8 @@ function woocommerce_by_delivery_date() {
 						//$file="C:/wamp/www/wordpress/wp-content/plugins/order-delivery-management/";
 						$file =dirname( __FILE__ );
 						$date=date('d-m-Y_h_i_s');
-						$fileName="/data_".$date.".csv";	
-						$file =$file.$fileName;
+						$fileName="data_".$date.".csv";	
+						$file =$file."/uploads/".$fileName;
 						$fp = fopen($file,'w');
 						
 						$header_value = "\"Order ID\",\"Name\",\"Contact\",\"Email\",\"Delivery Date\",\"Time Slot\",\"Delivery Address\",\"Shipping Address\",\"Delivery Note\",\"Allergies\",\"Special Request\",\"Special Request\",\"Wordings\",\"Candles\"";
@@ -434,30 +436,51 @@ function woocommerce_by_delivery_date() {
 								}
 							}
 							fclose($fp);
+							$filearray = array(
+							    'name' => $fileName,
+							    'path' => $file
+							);
+							update_site_option( 'sp_filedetails', $filearray );
 						}
 						catch(Exception $ex)
 						{}
-				
-					   try
-					   {
-							$fileName1="data_".$date.".csv";	
-							header('Content-Description: File Transfer');
-							header('Content-Type: application/octet-stream');
-							header('Content-Disposition: attachment; filename='.$fileName1);
-							header('Content-Transfer-Encoding: binary');
-							header('Expires: 0');
-							header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
-							header('Pragma: public');
-							header('Content-Length: ' . filesize($file));
-							ob_clean();
-							flush();
-							readfile($file);
-							unlink($file);
-							exit;
-					   }
-					   catch(Exception $ex)
-					   {}
-                }   
+                }
+                
+                $sp_filepath = get_site_option( 'sp_filedetails', null );
+                if( !empty( $sp_filepath ) ) {
+		    require_once( 'lib/SP_SpreadSheet.php' );
+		    if( class_exists( 'SP_SpreadSheet' ) ) {
+			try {
+			    $client_id = get_site_option( 'sp_google_client_id', null );
+			    $client_secret = get_site_option( 'sp_google_client_secret', null );
+			    $redirect_uri = ( is_ssl()?'https':'http' ). "://" .$_SERVER['HTTP_HOST'].$_SERVER['REQUEST_URI'];
+			    $sp_ss = new SP_SpreadSheet( $client_id, $client_secret, $redirect_uri );
+			    $sp_ss->uploadFile( $sp_filepath['name'], $sp_filepath['path'] );
+			}
+			catch(Exception $ex) {
+			    error_log( $ex->getMessage() );
+			}
+		    }
+		    
+		    try
+		    {
+			header('Content-Description: File Transfer');
+			header('Content-Type: application/octet-stream');
+			header('Content-Disposition: attachment; filename='.$sp_filepath['name']);
+			header('Content-Transfer-Encoding: binary');
+			header('Expires: 0');
+			header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+			header('Pragma: public');
+			header('Content-Length: ' . filesize($sp_filepath['path']));
+			ob_clean();
+			flush();
+			readfile($sp_filepath['path']);
+			unlink($sp_filepath['path']);
+			update_site_option( 'sp_filedetails', null );
+		    }
+		    catch(Exception $ex)
+		    {}
+                }
         ?>
 
 <form method="post" action="">
@@ -524,7 +547,7 @@ function woocommerce_by_delivery_date() {
                         
                         echo "<td>".$order_itemsval->email."</td>";
                         
-						echo "<td>".$order_itemsval->delivery_date ."</td>";
+						echo "<td>".date( 'l, d F, Y', strtotime( $order_itemsval->delivery_date ) ) ."</td>";
                         
 						echo "<td>".$order_itemsval->delivery_time."</td>";
                        if ( $order->get_formatted_billing_address() )
@@ -626,6 +649,72 @@ function dateRange( $first, $last, $step = '+1 day', $format = 'n/j/Y' ) {
  
 	return $dates;
 }
-}       
 
-?>
+function sp_google_drive_settings() {
+
+    $sp_saved = false;
+    if( isset( $_POST['sp_save_google'] ) ) {
+	update_site_option( 'sp_google_client_id', $_POST['sp_client_id'] );
+	update_site_option( 'sp_google_client_secret', $_POST['sp_client_secret'] );
+	$sp_saved = true;
+    }
+    
+    $sp_client_id = get_site_option( 'sp_google_client_id', null );
+    $sp_client_secret = get_site_option( 'sp_google_client_secret', null );
+    
+    if( $sp_saved ) {
+	?>
+	    <div class="updated fade">
+		<p>
+		    <?php _e( 'Settings Saved', 'woocommerce' ); ?>
+		</p>
+	    </div>
+	<?php
+    }
+    ?>
+	<form method="post" action="">
+	    <table class="form-table">
+		<tr valign="top">
+		    <td colspan="2">
+			<strong>
+			    <?php _e( 'Settings for Google Drive to export Order Delivery Schedule', 'woocommerce' ); ?>
+			</strong>
+		    </td>
+		</tr>
+		<tr valign="top">
+		    <td>
+			<?php _e( 'Client Id', 'woocommerce' ); ?>
+		    </td>
+		    <td>
+			<input type="text" value="<?php echo !empty( $sp_client_id )?$sp_client_id:''; ?>" name="sp_client_id" required />
+		    </td>
+		</tr>
+		<tr valign="top">
+		    <td>
+			<?php _e( 'Client Secret', 'woocommerce' ); ?>
+		    </td>
+		    <td>
+			<input type="text" value="<?php echo !empty( $sp_client_secret )?$sp_client_secret:''; ?>" name="sp_client_secret" required />
+		    </td>
+		</tr>
+		<tr valign="top">
+		    <td>
+			<?php _e( 'Note', 'woocommerce' ); ?>
+		    </td>
+		    <td>
+			<?php _e( 'Please set the following url as the application redirect url in google while creating client id.', 'woocommerce' ) ?>
+			<br />
+			<?php echo site_url().'/wp-admin/admin.php?page=woocommerce_reports&tab=sales&chart=report_by_delivery_date'; ?>
+		    </td>
+		</tr>
+		<tr>
+		    <td colspan="2">
+			<input type="submit" name="sp_save_google" class="button" value="<?php _e( 'Save', 'woocommerce' ); ?>" />
+		    </td>
+		</tr>
+	    </table>
+	</form>
+    <?php
+}
+
+}
